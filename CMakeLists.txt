@@ -6,7 +6,7 @@ find_package(Zephyr)
 project(zephyrix)
 
 add_executable(hello src/hello.c)
-target_compile_options(hello PRIVATE
+set(USERSPACE_COMPILE_OPTIONS
   -Os
   -mcpu=cortex-m3
   -mthumb
@@ -21,9 +21,19 @@ target_compile_options(hello PRIVATE
   -fdata-sections
   -std=c99
 )
-target_link_options(hello PRIVATE -nostdlib)
+set(USERSPACE_LINK_OPTIONS
+  -Wl,-z,max-page-size=1
+  -Wl,-z,common-page-size=1
+  -Ttext=0
+  -nostdlib
+)
+
+target_compile_options(hello PRIVATE ${USERSPACE_COMPILE_OPTIONS})
+target_link_options(hello PRIVATE
+  ${USERSPACE_COMPILE_OPTIONS}
+  ${USERSPACE_LINK_OPTIONS}
+)
 
 add_custom_command(OUTPUT hello.c DEPENDS hello COMMAND xxd -i -n hello $<TARGET_FILE:hello> hello.c)
-
 
 target_sources(app PRIVATE src/kernel.c hello.c)
