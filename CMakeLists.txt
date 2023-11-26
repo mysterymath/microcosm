@@ -34,6 +34,6 @@ target_link_options(hello PRIVATE
   ${USERSPACE_LINK_OPTIONS}
 )
 
-add_custom_command(OUTPUT hello.c DEPENDS hello COMMAND xxd -i -n hello $<TARGET_FILE:hello> hello.c)
-
-target_sources(app PRIVATE src/kernel.c hello.c)
+target_sources(app PRIVATE src/kernel.c src/hello.S)
+target_compile_definitions(app PRIVATE HELLO_FILE=\"$<TARGET_FILE:hello>\")
+add_dependencies(app hello)
