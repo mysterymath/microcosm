@@ -3,37 +3,22 @@ cmake_minimum_required(VERSION 3.20.0)
 set(BOARD qemu_cortex_m3)
 
 find_package(Zephyr)
-project(zephyrix)
+project(microcosm)
 
-add_executable(hello src/hello.c)
-set(USERSPACE_COMPILE_OPTIONS
-  -Os
-  -mcpu=cortex-m3
-  -mthumb
-  -mabi=aapcs
-  -mfp16-format=ieee
-  -mtp=soft
-  -fpie
-  -fno-asynchronous-unwind-tables
-  -ftls-model=local-exec
-  --param=min-pagesize=0
-  -ffunction-sections
-  -fdata-sections
-  -std=c99
-)
-set(USERSPACE_LINK_OPTIONS
-  -Wl,-z,max-page-size=1
-  -Wl,-z,common-page-size=1
-  -Ttext=0
-  -nostdlib
+set_property(GLOBAL PROPERTY TARGET_SUPPORTS_SHARED_LIBS TRUE)
+
+include(ExternalProject)
+ExternalProject_Add(userland
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/userland
+  CMAKE_ARGS
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/userland/cmake/toolchain.cmake
+    -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+    -DCMAKE_BUILD_TYPE=MinSizeRel
+    -DCMAKE_C_FLAGS=-mcpu=cortex-m3
+  DOWNLOAD_COMMAND ""
+  UPDATE_COMMAND ""
 )
 
-target_compile_options(hello PRIVATE ${USERSPACE_COMPILE_OPTIONS})
-target_link_options(hello PRIVATE
-  ${USERSPACE_COMPILE_OPTIONS}
-  ${USERSPACE_LINK_OPTIONS}
-)
-
-target_sources(app PRIVATE src/kernel.c src/hello.S)
-target_compile_definitions(app PRIVATE HELLO_FILE=\"$<TARGET_FILE:hello>\")
-add_dependencies(app hello)
+generate_inc_file_for_target(app ${CMAKE_CURRENT_BINARY_DIR}/userland-prefix/bin/hello ${ZEPHYR_BINARY_DIR}/include/generated/hello.inc)
+target_sources(app PRIVATE src/kernel.c)
+add_dependencies(app userland)

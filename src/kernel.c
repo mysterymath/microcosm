@@ -3,7 +3,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
-extern char hello[];
+static char hello[] = {
+#include <hello.inc>
+};
+
+char hello_runtime[2048];
 
 // Return minimum and maximum LOADed virtual addresses.
 static void get_extents(const Elf32_Ehdr *elf, uint32_t *begin, uint32_t *end) {
@@ -37,14 +41,13 @@ static void load(const Elf32_Ehdr *elf, void *image, uint32_t begin) {
 static void exec(const Elf32_Ehdr *elf) {
   uint32_t begin, end;
   get_extents(elf, &begin, &end);
-  void *image = k_malloc(end - begin);
-  if (!image) {
-    printk("could not allocate image");
+  if (end - begin > sizeof(hello_runtime)) {
+    printk("image too big");
     k_panic();
   }
-  load(elf, image, begin);
+  load(elf, hello_runtime, begin);
   void (*_start)(void (*)(const char *fmt, ...)) =
-      (void (*)(void (*)(const char *fmt, ...)))((char *)image + elf->e_entry);
+      (void (*)(void (*)(const char *fmt, ...)))(hello_runtime + elf->e_entry);
   _start(printk);
 }
 
