@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_NAME Microcosm)
 
 set(path ${CMAKE_CURRENT_LIST_DIR}/../../../toolchain/llvm-project/build/bin)
 

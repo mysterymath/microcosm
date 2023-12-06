@@ -17,8 +17,30 @@ ExternalProject_Add(userland
     -DCMAKE_C_FLAGS=-mcpu=cortex-m3
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND ""
+  BUILD_ALWAYS On
 )
 
-generate_inc_file_for_target(app ${CMAKE_CURRENT_BINARY_DIR}/userland-prefix/bin/hello ${ZEPHYR_BINARY_DIR}/include/generated/hello.inc)
+function(generate_userland_inc generated_file source) 
+  set(dst ${ZEPHYR_BINARY_DIR}/include/generated/${generated_file})
+  set(src ${CMAKE_CURRENT_BINARY_DIR}/userland-prefix/bin/${source})
+
+  add_custom_command(
+    OUTPUT ${dst}
+    COMMAND
+      ${PYTHON_EXECUTABLE}
+      ${ZEPHYR_BASE}/scripts/build/file2hex.py
+      ${ARGN} # Extra arguments are passed to file2hex.py
+      --file ${src}
+      > ${dst} # Does pipe redirection work on Windows?
+    DEPENDS
+      userland
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  generate_unique_target_name_from_filename(${dst} generated_target_name)
+  add_custom_target(${generated_target_name} DEPENDS ${dst})
+  add_dependencies(app ${generated_target_name})
+endfunction()
+
+generate_userland_inc(hello.inc hello)
 target_sources(app PRIVATE src/kernel.c)
 add_dependencies(app userland)

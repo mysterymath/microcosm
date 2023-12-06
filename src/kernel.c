@@ -3,52 +3,124 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
-static char hello[] = {
+_Alignas(4) static char hello_bin[] = {
 #include <hello.inc>
 };
 
-char hello_runtime[2048];
+_Alignas(16) char hello_mem[2048];
 
-// Return minimum and maximum LOADed virtual addresses.
-static void get_extents(const Elf32_Ehdr *elf, uint32_t *begin, uint32_t *end) {
-  *begin = UINT32_MAX;
-  *end = 0;
-  const Elf32_Phdr *phdr = (const Elf32_Phdr *)((char *)elf + elf->e_phoff);
-  for (uint16_t i = 0; i < elf->e_phnum;
-       i++, phdr = (const Elf32_Phdr *)((char *)phdr + elf->e_phentsize)) {
-    if (phdr->p_type != PT_LOAD)
-      continue;
-    if (phdr->p_vaddr < *begin)
-      *begin = phdr->p_vaddr;
-    size_t cur_end = phdr->p_vaddr + phdr->p_memsz;
-    if (cur_end > *end)
-      *end = cur_end;
-  }
+const Elf32_Phdr *phdr_begin(const Elf32_Ehdr *elf) {
+  return (const Elf32_Phdr *)((char *)elf + elf->e_phoff);
+}
+
+const Elf32_Phdr *phdr_next(const Elf32_Phdr *phdr, const Elf32_Ehdr *elf) {
+  return (const Elf32_Phdr *)((char *)phdr + elf->e_phentsize);
 }
 
 // Load an ELF file with the given vaddr begin into an image.
-static void load(const Elf32_Ehdr *elf, void *image, uint32_t begin) {
-  const Elf32_Phdr *phdr = (const Elf32_Phdr *)((char *)elf + elf->e_phoff);
-  for (uint16_t i = 0; i < elf->e_phnum;
-       i++, phdr = (const Elf32_Phdr *)((char *)phdr + elf->e_phentsize)) {
-    char *dst = (char *)image + (phdr->p_vaddr - begin);
+static void load(const Elf32_Ehdr *elf, void *image, size_t max_size) {
+  const Elf32_Phdr *phdr = phdr_begin(elf);
+  for (uint16_t i = 0; i < elf->e_phnum; i++, phdr = phdr_next(phdr, elf)) {
+    if (phdr->p_vaddr > max_size || phdr->p_memsz > max_size - phdr->p_vaddr) {
+      printk("image too big");
+      k_panic();
+    }
+
+    char *dst = (char *)image + phdr->p_vaddr;
     char *src = (char *)elf + phdr->p_offset;
     memcpy(dst, src, phdr->p_filesz);
     memset(dst + phdr->p_filesz, 0, phdr->p_memsz - phdr->p_filesz);
   }
 }
 
-static void exec(const Elf32_Ehdr *elf) {
-  uint32_t begin, end;
-  get_extents(elf, &begin, &end);
-  if (end - begin > sizeof(hello_runtime)) {
-    printk("image too big");
-    k_panic();
+const Elf32_Dyn *dyn_begin(const Elf32_Ehdr *elf) {
+  const Elf32_Phdr *phdr = phdr_begin(elf);
+  for (uint16_t i = 0; i < elf->e_phnum; i++, phdr = phdr_next(phdr, elf)) {
+    if (phdr->p_type == PT_DYNAMIC)
+      return (const Elf32_Dyn *)((const char *)elf + phdr->p_offset);
   }
-  load(elf, hello_runtime, begin);
-  void (*_start)(void (*)(const char *fmt, ...)) =
-      (void (*)(void (*)(const char *fmt, ...)))(hello_runtime + elf->e_entry);
-  _start(printk);
+  return NULL;
 }
 
-void main(void) { exec((const Elf32_Ehdr *)hello); }
+typedef struct {
+  Elf32_Ehdr *elf;
+
+  uint32_t jmprel;
+  uint32_t pltrelsz;
+  uint32_t strtab;
+  uint32_t syment;
+  uint32_t symtab;
+} Dynamic;
+
+Dynamic dyn_parse(Elf32_Ehdr *elf) {
+  Dynamic ret;
+  ret.elf = elf;
+  for (const Elf32_Dyn *dyn = dyn_begin(elf); dyn->d_tag != DT_NULL; ++dyn) {
+    if (dyn->d_tag == DT_JMPREL)
+      ret.jmprel = dyn->d_un.d_val;
+    else if (dyn->d_tag == DT_PLTRELSZ)
+      ret.pltrelsz = dyn->d_un.d_val;
+    else if (dyn->d_tag == DT_STRTAB)
+      ret.strtab = dyn->d_un.d_ptr;
+    else if (dyn->d_tag == DT_SYMENT)
+      ret.syment = dyn->d_un.d_val;
+    else if (dyn->d_tag == DT_SYMTAB)
+      ret.symtab = dyn->d_un.d_ptr;
+  }
+  return ret;
+}
+
+const Elf32_Rel *dyn_jmprel_begin(const Dynamic *dyn) {
+  return (const Elf32_Rel *)((const char *)dyn->elf + dyn->jmprel);
+}
+const Elf32_Rel *dyn_jmprel_end(const Dynamic *dyn) {
+  return (const Elf32_Rel *)((const char *)dyn->elf + dyn->jmprel +
+                             dyn->pltrelsz);
+}
+
+const Elf32_Sym *dyn_sym(const Dynamic *dyn, uint32_t idx) {
+  return (const Elf32_Sym *)((const char *)dyn->elf + dyn->symtab +
+                             idx * dyn->syment);
+}
+
+const char *dyn_str(const Dynamic *dyn, uint32_t idx) {
+  return (const char *)dyn->elf + dyn->strtab + idx;
+}
+
+static void link(Elf32_Ehdr *elf) {
+  Dynamic dyn = dyn_parse(elf);
+  for (const Elf32_Rel *rel = dyn_jmprel_begin(&dyn),
+                       *end = dyn_jmprel_end(&dyn);
+       rel != end; ++rel) {
+    unsigned char type = ELF32_R_TYPE(rel->r_info);
+    if (type != R_ARM_JUMP_SLOT) {
+      printk("unhandled relocation: %d\n", type);
+      k_panic();
+    }
+
+    const Elf32_Sym *sym = dyn_sym(&dyn, ELF32_R_SYM(rel->r_info));
+    const char *name = dyn_str(&dyn, sym->st_name);
+    if (strcmp(name, "printk")) {
+      printk("unknown symbol: %s\n", name);
+      k_panic();
+    }
+
+    printk("Offset: %x\n", rel->r_offset);
+    printk("Current value: %x\n", *(uint32_t *)((const char *)elf + rel->r_offset));
+
+    *(uint32_t *)((const char *)elf + rel->r_offset) = (uint32_t)printk;
+  }
+}
+
+static void exec(const Elf32_Ehdr *elf) {
+  load(elf, hello_mem, sizeof hello_mem);
+  Elf32_Ehdr *hello = (Elf32_Ehdr *)hello_mem;
+  link(hello);
+  void (*_start)(void) = (void (*)(void))((const char *)hello + hello->e_entry);
+  _start();
+}
+
+int main(void) {
+  exec((const Elf32_Ehdr *)hello_bin);
+  return 0;
+}
