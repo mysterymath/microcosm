@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20.0)
 
-set(BOARD qemu_cortex_m3)
+set(BOARD qemu_cortex_m0)
 
 find_package(Zephyr)
 project(microcosm)
@@ -14,7 +14,7 @@ ExternalProject_Add(userland
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/userland/cmake/toolchain.cmake
     -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
     -DCMAKE_BUILD_TYPE=MinSizeRel
-    -DCMAKE_C_FLAGS=-mcpu=cortex-m3
+    -DCMAKE_C_FLAGS=-mcpu=cortex-m0
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND ""
   BUILD_ALWAYS On
