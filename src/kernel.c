@@ -105,9 +105,6 @@ static void link(Elf32_Ehdr *elf) {
       k_panic();
     }
 
-    printk("Offset: %x\n", rel->r_offset);
-    printk("Current value: %x\n", *(uint32_t *)((const char *)elf + rel->r_offset));
-
     *(uint32_t *)((const char *)elf + rel->r_offset) = (uint32_t)printk;
   }
 }
