@@ -143,13 +143,6 @@ const char *dyn_str(const Dynamic *dyn, uint32_t idx) {
 
 typedef void (*init_fini_fn)();
 
-init_fini_fn dyn_init_array(const Dynamic *dyn, uint32_t offset) {
-  return ptr_offset(dyn->elf, dyn->init_array + offset);
-}
-init_fini_fn dyn_fini_array(const Dynamic *dyn, uint32_t offset) {
-  return ptr_offset(dyn->elf, dyn->fini_array + offset);
-}
-
 static void relocate(const Elf32_Rel *rel, const Dynamic *dyn,
                      uint32_t elf_offset) {
   const Elf32_Sym *sym = dyn_sym(dyn, ELF32_R_SYM(rel->r_info));
@@ -179,7 +172,7 @@ static void relocate(const Elf32_Rel *rel, const Dynamic *dyn,
     *loc = value;
     break;
   case R_ARM_RELATIVE:
-    *loc = elf_offset;
+    *loc += elf_offset;
     break;
   }
 }
