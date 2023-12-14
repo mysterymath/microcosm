@@ -59,6 +59,9 @@ const Elf32_Dyn *dyn_begin(const Elf32_Ehdr *elf) {
 typedef struct {
   Elf32_Ehdr *elf;
 
+  uint32_t rel;
+  uint32_t relsz;
+  uint32_t relent;
   uint32_t jmprel;
   uint32_t pltrelsz;
   uint32_t strtab;
@@ -67,9 +70,15 @@ typedef struct {
 } Dynamic;
 
 Dynamic dyn_parse(Elf32_Ehdr *elf) {
-  Dynamic ret;
+  Dynamic ret = {0};
   ret.elf = elf;
   for (const Elf32_Dyn *dyn = dyn_begin(elf); dyn->d_tag != DT_NULL; ++dyn) {
+    if (dyn->d_tag == DT_REL)
+      ret.rel = dyn->d_un.d_ptr;
+    if (dyn->d_tag == DT_RELSZ)
+      ret.relsz = dyn->d_un.d_val;
+    if (dyn->d_tag == DT_RELENT)
+      ret.relent = dyn->d_un.d_val;
     if (dyn->d_tag == DT_JMPREL)
       ret.jmprel = dyn->d_un.d_val;
     else if (dyn->d_tag == DT_PLTRELSZ)
@@ -82,6 +91,10 @@ Dynamic dyn_parse(Elf32_Ehdr *elf) {
       ret.symtab = dyn->d_un.d_ptr;
   }
   return ret;
+}
+
+const Elf32_Rel *dyn_rel(const Dynamic *dyn, uint32_t offset) {
+  return (const Elf32_Rel *)((const char *)dyn->elf + dyn->rel + offset);
 }
 
 const Elf32_Rel *dyn_jmprel_begin(const Dynamic *dyn) {
@@ -101,39 +114,46 @@ const char *dyn_str(const Dynamic *dyn, uint32_t idx) {
   return (const char *)dyn->elf + dyn->strtab + idx;
 }
 
+static void relocate(const Elf32_Rel *rel, const Dynamic *dyn,
+                     uint32_t elf_offset) {
+  const Elf32_Sym *sym = dyn_sym(dyn, ELF32_R_SYM(rel->r_info));
+  const char *name = sym->st_name ? dyn_str(dyn, sym->st_name) : NULL;
+  uint32_t value = 0;
+  if (name) {
+    if (!strcmp(name, "printk")) {
+      value = (uint32_t)printk;
+    } else if (ELF32_ST_BIND(sym->st_info) != STB_WEAK) {
+      printk("unknown symbol: %s\n", name);
+      k_panic();
+    }
+  }
+
+  unsigned char type = ELF32_R_TYPE(rel->r_info);
+  switch (type) {
+  default:
+    printk("unhandled relocation: %d\n", type);
+    k_panic();
+    __builtin_unreachable();
+  case R_ARM_JUMP_SLOT:
+    *(uint32_t *)((const char *)dyn->elf + rel->r_offset) = value;
+    break;
+  case R_ARM_RELATIVE:
+    *(uint32_t *)((const char *)dyn->elf + rel->r_offset) += elf_offset;
+    break;
+  }
+}
+
 static void link(Elf32_Ehdr *elf) {
   const uint32_t elf_offset = (uint32_t)elf - elf_base(elf);
   Dynamic dyn = dyn_parse(elf);
+
+  for (uint32_t rel_offset = 0; rel_offset < dyn.relsz;
+       rel_offset += dyn.relent)
+    relocate(dyn_rel(&dyn, rel_offset), &dyn, elf_offset);
   for (const Elf32_Rel *rel = dyn_jmprel_begin(&dyn),
                        *end = dyn_jmprel_end(&dyn);
-       rel != end; ++rel) {
-
-    const Elf32_Sym *sym = dyn_sym(&dyn, ELF32_R_SYM(rel->r_info));
-    const char *name = sym->st_name ? dyn_str(&dyn, sym->st_name) : NULL;
-    uint32_t value = 0;
-    if (name) {
-      if (!strcmp(name, "printk")) {
-        value = (uint32_t)printk;
-      } else if (ELF32_ST_BIND(sym->st_info) != STB_WEAK) {
-        printk("unknown symbol: %s\n", name);
-        k_panic();
-      }
-    }
-
-    unsigned char type = ELF32_R_TYPE(rel->r_info);
-    switch (type) {
-      default:
-        printk("unhandled relocation: %d\n", type);
-        k_panic();
-        __builtin_unreachable();
-      case R_ARM_JUMP_SLOT:
-        *(uint32_t *)((const char *)elf + rel->r_offset) = value;
-        break;
-      case R_ARM_RELATIVE:
-        *(uint32_t *)((const char *)elf + rel->r_offset) += elf_offset;
-        break;
-    }
-  }
+       rel != end; ++rel)
+    relocate(rel, &dyn, elf_offset);
 }
 
 static void exec(const Elf32_Ehdr *elf) {
