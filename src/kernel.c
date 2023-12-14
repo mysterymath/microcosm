@@ -128,17 +128,22 @@ static void relocate(const Elf32_Rel *rel, const Dynamic *dyn,
     }
   }
 
+  uint32_t *loc = (uint32_t*)((const char *)dyn->elf + rel->r_offset);
+
   unsigned char type = ELF32_R_TYPE(rel->r_info);
   switch (type) {
   default:
     printk("unhandled relocation: %d\n", type);
     k_panic();
     __builtin_unreachable();
+  case R_ARM_GLOB_DAT:
+    *loc += value;
+    break;
   case R_ARM_JUMP_SLOT:
-    *(uint32_t *)((const char *)dyn->elf + rel->r_offset) = value;
+    *loc = value;
     break;
   case R_ARM_RELATIVE:
-    *(uint32_t *)((const char *)dyn->elf + rel->r_offset) += elf_offset;
+    *loc = elf_offset;
     break;
   }
 }
