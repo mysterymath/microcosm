@@ -2,6 +2,8 @@ manifest:
   remotes:
     - name: zephyrproject-rtos
       url-base: https://github.com/zephyrproject-rtos
+    - name: mysterymath
+      url-base: https://github.com/mysterymath
 
   projects:
     - name: zephyr
@@ -10,3 +12,6 @@ manifest:
       import:
         name-allowlist:
           - cmsis
+    - name: microcosm-toolchain
+      remote: mysterymath
+      path: toolchain
