@@ -17,10 +17,24 @@ const Elf32_Phdr *phdr_next(const Elf32_Phdr *phdr, const Elf32_Ehdr *elf) {
   return (const Elf32_Phdr *)((char *)phdr + elf->e_phentsize);
 }
 
+static uint32_t elf_base(const Elf32_Ehdr *elf) {
+  const Elf32_Phdr *phdr = phdr_begin(elf);
+  for (uint16_t i = 0; i < elf->e_phnum; i++, phdr = phdr_next(phdr, elf))
+    if (phdr->p_type == PT_LOAD)
+      return phdr->p_vaddr;
+
+  printk("missing LOAD program header");
+  k_panic();
+  __builtin_unreachable();
+}
+
 // Load an ELF file with the given vaddr begin into an image.
 static void load(const Elf32_Ehdr *elf, void *image, size_t max_size) {
   const Elf32_Phdr *phdr = phdr_begin(elf);
   for (uint16_t i = 0; i < elf->e_phnum; i++, phdr = phdr_next(phdr, elf)) {
+    if (phdr->p_type != PT_LOAD)
+      continue;
+
     if (phdr->p_vaddr > max_size || phdr->p_memsz > max_size - phdr->p_vaddr) {
       printk("image too big");
       k_panic();
@@ -88,24 +102,37 @@ const char *dyn_str(const Dynamic *dyn, uint32_t idx) {
 }
 
 static void link(Elf32_Ehdr *elf) {
+  const uint32_t elf_offset = (uint32_t)elf - elf_base(elf);
   Dynamic dyn = dyn_parse(elf);
   for (const Elf32_Rel *rel = dyn_jmprel_begin(&dyn),
                        *end = dyn_jmprel_end(&dyn);
        rel != end; ++rel) {
-    unsigned char type = ELF32_R_TYPE(rel->r_info);
-    if (type != R_ARM_JUMP_SLOT) {
-      printk("unhandled relocation: %d\n", type);
-      k_panic();
-    }
 
     const Elf32_Sym *sym = dyn_sym(&dyn, ELF32_R_SYM(rel->r_info));
-    const char *name = dyn_str(&dyn, sym->st_name);
-    if (strcmp(name, "printk")) {
-      printk("unknown symbol: %s\n", name);
-      k_panic();
+    const char *name = sym->st_name ? dyn_str(&dyn, sym->st_name) : NULL;
+    uint32_t value = 0;
+    if (name) {
+      if (!strcmp(name, "printk")) {
+        value = (uint32_t)printk;
+      } else if (ELF32_ST_BIND(sym->st_info) != STB_WEAK) {
+        printk("unknown symbol: %s\n", name);
+        k_panic();
+      }
     }
 
-    *(uint32_t *)((const char *)elf + rel->r_offset) = (uint32_t)printk;
+    unsigned char type = ELF32_R_TYPE(rel->r_info);
+    switch (type) {
+      default:
+        printk("unhandled relocation: %d\n", type);
+        k_panic();
+        __builtin_unreachable();
+      case R_ARM_JUMP_SLOT:
+        *(uint32_t *)((const char *)elf + rel->r_offset) = value;
+        break;
+      case R_ARM_RELATIVE:
+        *(uint32_t *)((const char *)elf + rel->r_offset) += elf_offset;
+        break;
+    }
   }
 }
 
